@@ -6,54 +6,67 @@ Set-StrictMode -Version Latest
 $scriptsDir = split-path -parent $script:MyInvocation.MyCommand.Definition
 . "$scriptsDir\VcpkgPowershellUtils.ps1"
 
-$vswhereExe = (& $scriptsDir\fetchTool.ps1 "vswhere") -replace "<sol>::" -replace "::<eol>"
-
-$output = & $vswhereExe -prerelease -legacy -products * -format xml
-[xml]$asXml = $output
+$programFiles = & $scriptsDir\getProgramFiles32bit.ps1
 
 $results = New-Object System.Collections.ArrayList
-foreach ($instance in $asXml.instances.instance)
+
+$vswhereExe = "$programFiles\Microsoft Visual Studio\Installer\vswhere.exe"
+
+if (Test-Path $vswhereExe)
 {
-    $installationPath = $instance.InstallationPath -replace "\\$" # Remove potential trailing backslash
-    $installationVersion = $instance.InstallationVersion
+    $output = & $vswhereExe -prerelease -legacy -products * -format xml
+    [xml]$asXml = $output
 
-    $isPrerelease = -7
-    if (vcpkgHasProperty -object $instance -propertyName "isPrerelease")
+    foreach ($instance in $asXml.instances.instance)
     {
-        $isPrerelease = $instance.isPrerelease
-    }
+        $installationPath = $instance.InstallationPath -replace "\\$" # Remove potential trailing backslash
+        $installationVersion = $instance.InstallationVersion
 
-    if ($isPrerelease -eq 0)
-    {
-        $releaseType = "PreferenceWeight3::StableRelease"
-    }
-    elseif ($isPrerelease -eq 1)
-    {
-        $releaseType = "PreferenceWeight2::PreRelease"
-    }
-    else
-    {
-        $releaseType = "PreferenceWeight1::Legacy"
-    }
+        $isPrerelease = -7
+        if (vcpkgHasProperty -object $instance -propertyName "isPrerelease")
+        {
+            $isPrerelease = $instance.isPrerelease
+        }
 
-    # Placed like that for easy sorting according to preference
-    $results.Add("<sol>::${releaseType}::${installationVersion}::${installationPath}::<eol>") > $null
-}
+        if ($isPrerelease -eq 0)
+        {
+            $releaseType = "PreferenceWeight3::StableRelease"
+        }
+        elseif ($isPrerelease -eq 1)
+        {
+            $releaseType = "PreferenceWeight2::PreRelease"
+        }
+        else
+        {
+            $releaseType = "PreferenceWeight1::Legacy"
+        }
 
-# If nothing is found, attempt to find VS2015 Build Tools (not detected by vswhere.exe)
-if ($results.Count -eq 0)
-{
-    $programFiles = & $scriptsDir\getProgramFiles32bit.ps1
-    $installationPath = "$programFiles\Microsoft Visual Studio 14.0"
-    $clExe = "$installationPath\VC\bin\cl.exe"
-    $vcvarsallbat = "$installationPath\VC\vcvarsall.bat"
-
-    if ((Test-Path $clExe) -And (Test-Path $vcvarsallbat))
-    {
-        return "<sol>::PreferenceWeight1::Legacy::14.0::$installationPath::<eol>"
+        # Placed like that for easy sorting according to preference
+        $results.Add("<sol>::${releaseType}::${installationVersion}::${installationPath}::<eol>") > $null
     }
 }
+else
+{
+    Write-Verbose "Could not locate vswhere at $vswhereExe"
+}
 
+$installationPath = Split-Path -Parent $(Split-Path -Parent "$env:vs140comntools")
+$clExe = "$installationPath\VC\bin\cl.exe"
+$vcvarsallbat = "$installationPath\VC\vcvarsall.bat"
+
+if ((Test-Path $clExe) -And (Test-Path $vcvarsallbat))
+{
+    $results.Add("<sol>::PreferenceWeight1::Legacy::14.0::$installationPath::<eol>") > $null
+}
+
+$installationPath = "$programFiles\Microsoft Visual Studio 14.0"
+$clExe = "$installationPath\VC\bin\cl.exe"
+$vcvarsallbat = "$installationPath\VC\vcvarsall.bat"
+
+if ((Test-Path $clExe) -And (Test-Path $vcvarsallbat))
+{
+    $results.Add("<sol>::PreferenceWeight1::Legacy::14.0::$installationPath::<eol>") > $null
+}
 
 $results.Sort()
 $results.Reverse()

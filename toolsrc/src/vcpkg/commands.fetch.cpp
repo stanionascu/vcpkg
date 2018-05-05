@@ -19,6 +19,7 @@ namespace vcpkg::Commands::Fetch
         fs::path exe_path;
         std::string url;
         fs::path download_path;
+        bool is_archive;
         fs::path tool_dir_path;
         std::string sha512;
     };
@@ -136,6 +137,7 @@ namespace vcpkg::Commands::Fetch
                         exe_path,
                         url,
                         paths.downloads / archive_name.value_or(exe_relative_path),
+                        archive_name.has_value(),
                         tool_dir_path,
                         sha512};
 #endif
@@ -163,11 +165,13 @@ namespace vcpkg::Commands::Fetch
                  actual_version[2] >= expected_version[2]));
     }
 
-    static Optional<fs::path> find_if_has_equal_or_greater_version(const std::vector<fs::path>& candidate_paths,
+    static Optional<fs::path> find_if_has_equal_or_greater_version(Files::Filesystem& fs,
+                                                                   const std::vector<fs::path>& candidate_paths,
                                                                    const std::string& version_check_arguments,
                                                                    const std::array<int, 3>& expected_version)
     {
         auto it = Util::find_if(candidate_paths, [&](const fs::path& p) {
+            if (!fs.exists(p)) return false;
             const std::string cmd = Strings::format(R"("%s" %s)", p.u8string(), version_check_arguments);
             return exists_and_has_equal_or_greater_version(cmd, expected_version);
         });
@@ -197,7 +201,61 @@ namespace vcpkg::Commands::Fetch
         return data_lines;
     }
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    static void extract_zip_win32_shell(Files::Filesystem& fs, const fs::path& archive, const fs::path& to_path_partial)
+    {
+        BSTR src = SysAllocString(archive.native().c_str());
+        BSTR dest = SysAllocString(to_path_partial.native().c_str());
+
+        CoInitialize(nullptr);
+        IShellDispatch* pISD;
+        Folder* pFolder = nullptr;
+        VARIANT vDir, vFile, vOpt;
+        auto hr = CoCreateInstance(CLSID_Shell, NULL, CLSCTX_INPROC_SERVER, IID_IShellDispatch, (void**)&pISD);
+        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
+        VariantInit(&vFile);
+        vFile.vt = VT_BSTR;
+        vFile.bstrVal = src;
+
+        hr = pISD->NameSpace(vFile, &pFolder);
+        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
+        FolderItems* fi = NULL;
+        hr = pFolder->Items(&fi);
+        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
+
+        VariantInit(&vOpt);
+        vOpt.vt = VT_I4;
+        vOpt.lVal = FOF_NO_UI; // Do not display a progress dialog box
+
+        VARIANT newV;
+        VariantInit(&newV);
+        newV.vt = VT_DISPATCH;
+        newV.pdispVal = fi;
+
+        Folder* pToFolder = nullptr;
+        VariantInit(&vDir);
+        vDir.vt = VT_BSTR;
+        vDir.bstrVal = dest;
+
+        std::error_code ec;
+        fs.create_directories(to_path_partial, ec);
+        hr = pISD->NameSpace(vDir, &pToFolder);
+        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
+
+        hr = pToFolder->CopyHere(newV, vOpt);
+        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
+
+        pToFolder->Release();
+        pFolder->Release();
+        pISD->Release();
+
+        SysFreeString(src);
+        SysFreeString(dest);
+
+        CoUninitialize();
+    }
+#endif
+
     static void extract_archive(const VcpkgPaths& paths, const fs::path& archive, const fs::path& to_path)
     {
         Files::Filesystem& fs = paths.get_filesystem();
@@ -207,6 +265,50 @@ namespace vcpkg::Commands::Fetch
         fs.remove_all(to_path_partial, ec);
         fs.create_directories(to_path_partial, ec);
 
+#if defined(_WIN32)
+        const auto filename = archive.filename();
+        if (filename == "7za920.zip")
+        {
+            extract_zip_win32_shell(fs, archive, to_path_partial);
+            for (int x = 0; x < 600; ++x)
+            {
+                if (fs.exists(to_path_partial / "7za.exe")) goto copying_completed;
+                Sleep(100);
+            }
+            Checks::exit_with_message(VCPKG_LINE_INFO, "timeout while extracting %s", archive.u8string());
+        copying_completed:;
+        }
+        else if (filename == "7z1801-extra.7z")
+        {
+            static bool recursion_limiter7zold = false;
+            Checks::check_exit(VCPKG_LINE_INFO, !recursion_limiter7zold);
+            recursion_limiter7zold = true;
+            const auto old_7zip = get_tool_path(paths, "7zip920");
+            const auto code_and_output = System::cmd_execute_and_capture_output(Strings::format(
+                R"("%s" x "%s" -o"%s" -y)", old_7zip.u8string(), archive.u8string(), to_path_partial.u8string()));
+            Checks::check_exit(VCPKG_LINE_INFO,
+                               code_and_output.exit_code == 0,
+                               "7zip failed while extracting '%s' with message:\n%s",
+                               archive.u8string(),
+                               code_and_output.output);
+            recursion_limiter7zold = false;
+        }
+        else
+        {
+            static bool recursion_limiter7z = false;
+            Checks::check_exit(VCPKG_LINE_INFO, !recursion_limiter7z);
+            recursion_limiter7z = true;
+            const auto seven_zip = get_tool_path(paths, "7zip");
+            const auto code_and_output = System::cmd_execute_and_capture_output(Strings::format(
+                R"("%s" x "%s" -o"%s" -y)", seven_zip.u8string(), archive.u8string(), to_path_partial.u8string()));
+            Checks::check_exit(VCPKG_LINE_INFO,
+                               code_and_output.exit_code == 0,
+                               "7zip failed while extracting '%s' with message:\n%s",
+                               archive.u8string(),
+                               code_and_output.output);
+            recursion_limiter7z = false;
+        }
+#else
         const auto ext = archive.extension();
         if (ext == ".gz" && ext.extension() != ".tar")
         {
@@ -224,6 +326,7 @@ namespace vcpkg::Commands::Fetch
         {
             Checks::exit_with_message(VCPKG_LINE_INFO, "Unexpected archive extension: %s", ext.u8string());
         }
+#endif
 
         fs.rename(to_path_partial, to_path);
     }
@@ -247,6 +350,72 @@ namespace vcpkg::Commands::Fetch
                            actual_hash);
     }
 
+#if defined(_WIN32)
+    static void winhttp_download_file(CStringView target_file_path, CStringView hostname, CStringView url_path)
+    {
+        FILE* f = nullptr;
+        auto err = fopen_s(&f, target_file_path.c_str(), "wb");
+        Checks::check_exit(VCPKG_LINE_INFO, !err, "Could not download https://%s%s", hostname, url_path);
+
+        auto hSession = WinHttpOpen(
+            L"vcpkg/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        Checks::check_exit(VCPKG_LINE_INFO, hSession, "WinHttpOpen() failed: %s", GetLastError());
+
+        // Use Windows 10 defaults on Windows 7
+        DWORD secure_protocols(WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1 |
+                               WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2);
+        WinHttpSetOption(hSession, WINHTTP_OPTION_SECURE_PROTOCOLS, &secure_protocols, sizeof(secure_protocols));
+
+        // Specify an HTTP server.
+        auto hConnect = WinHttpConnect(hSession, Strings::to_utf16(hostname).c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+        Checks::check_exit(VCPKG_LINE_INFO, hConnect, "WinHttpConnect() failed: %s", GetLastError());
+
+        // Create an HTTP request handle.
+        auto hRequest = WinHttpOpenRequest(hConnect,
+                                           L"GET",
+                                           Strings::to_utf16(url_path).c_str(),
+                                           nullptr,
+                                           WINHTTP_NO_REFERER,
+                                           WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           WINHTTP_FLAG_SECURE);
+        Checks::check_exit(VCPKG_LINE_INFO, hRequest, "WinHttpOpenRequest() failed: %s", GetLastError());
+
+        // Send a request.
+        auto bResults =
+            WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+        Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpSendRequest() failed: %s", GetLastError());
+
+        // End the request.
+        bResults = WinHttpReceiveResponse(hRequest, NULL);
+        Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpReceiveResponse() failed: %s", GetLastError());
+
+        std::vector<char> buf;
+
+        size_t total_downloaded_size = 0;
+        DWORD dwSize = 0;
+        do
+        {
+            DWORD downloaded_size = 0;
+            bResults = WinHttpQueryDataAvailable(hRequest, &dwSize);
+            Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpQueryDataAvailable() failed: %s", GetLastError());
+
+            if (buf.size() < dwSize) buf.resize(dwSize * 2);
+
+            bResults = WinHttpReadData(hRequest, (LPVOID)buf.data(), dwSize, &downloaded_size);
+            Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpReadData() failed: %s", GetLastError());
+            fwrite(buf.data(), 1, downloaded_size, f);
+
+            total_downloaded_size += downloaded_size;
+        } while (dwSize > 0);
+
+        WinHttpCloseHandle(hSession);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hRequest);
+        fflush(f);
+        fclose(f);
+    }
+#endif
+
     static void download_file(const VcpkgPaths& paths,
                               const std::string& url,
                               const fs::path& download_path,
@@ -256,15 +425,23 @@ namespace vcpkg::Commands::Fetch
         const std::string download_path_part = download_path.u8string() + ".part";
         std::error_code ec;
         fs.remove(download_path_part, ec);
-        const auto code = System::cmd_execute(
-            Strings::format(R"(curl -L '%s' --create-dirs --output '%s')", url, download_path_part));
+#if defined(_WIN32)
+        auto url_no_proto = url.substr(8); // drop https://
+        auto path_begin = Util::find(url_no_proto, '/');
+        std::string hostname(url_no_proto.begin(), path_begin);
+        std::string path(path_begin, url_no_proto.end());
+
+        winhttp_download_file(download_path_part.c_str(), hostname, path);
+#else
+        const auto code = System::cmd_execute(Strings::format(
+            R"(curl -L '%s' --create-dirs --output '%s')", url, download_path_part));
         Checks::check_exit(VCPKG_LINE_INFO, code == 0, "Could not download %s", url);
+#endif
 
         verify_hash(paths, url, download_path_part, sha512);
         fs.rename(download_path_part, download_path);
     }
 
-#endif
     static fs::path fetch_tool(const VcpkgPaths& paths, const std::string& tool_name, const ToolData& tool_data)
     {
         const std::array<int, 3>& version = tool_data.version;
@@ -280,28 +457,7 @@ namespace vcpkg::Commands::Fetch
                         version_as_string,
                         tool_name,
                         version_as_string);
-#if defined(_WIN32)
-        const fs::path script = paths.scripts / "fetchtool.ps1";
-        const std::string title = Strings::format(
-            "Fetching %s version %s (No sufficient installed version was found)", tool_name, version_as_string);
-        const System::PowershellParameter tool_param("tool", tool_name);
-        const std::string output = System::powershell_execute_and_capture_output(title, script, {tool_param});
-
-        const std::vector<std::string> tool_path = keep_data_lines(output);
-        Checks::check_exit(VCPKG_LINE_INFO, tool_path.size() == 1, "Expected tool path, but got %s", output);
-
-        const fs::path actual_downloaded_path = Strings::trim(std::string{tool_path.at(0)});
-        const fs::path& expected_downloaded_path = tool_data.exe_path;
-        std::error_code ec;
-        const auto eq = fs::stdfs::equivalent(expected_downloaded_path, actual_downloaded_path, ec);
-        Checks::check_exit(VCPKG_LINE_INFO,
-                           eq && !ec,
-                           "Expected tool downloaded path to be %s, but was %s",
-                           expected_downloaded_path.u8string(),
-                           actual_downloaded_path.u8string());
-        return actual_downloaded_path;
-#else
-        const auto& fs = paths.get_filesystem();
+        auto& fs = paths.get_filesystem();
         if (!fs.exists(tool_data.download_path))
         {
             System::println("Downloading %s...", tool_name);
@@ -313,17 +469,25 @@ namespace vcpkg::Commands::Fetch
             verify_hash(paths, tool_data.url, tool_data.download_path, tool_data.sha512);
         }
 
-        System::println("Extracting %s...", tool_name);
-        extract_archive(paths, tool_data.download_path, tool_data.tool_dir_path);
-        System::println("Extracting %s... done.", tool_name);
+        if (tool_data.is_archive)
+        {
+            System::println("Extracting %s...", tool_name);
+            extract_archive(paths, tool_data.download_path, tool_data.tool_dir_path);
+            System::println("Extracting %s... done.", tool_name);
+        }
+        else
+        {
+            std::error_code ec;
+            fs.create_directories(tool_data.exe_path.parent_path(), ec);
+            fs.copy_file(tool_data.download_path, tool_data.exe_path, fs::copy_options::overwrite_existing, ec);
+        }
 
         Checks::check_exit(VCPKG_LINE_INFO,
                            fs.exists(tool_data.exe_path),
-                           "Expected %s to exist after extracting",
-                           tool_data.exe_path);
+                           "Expected %s to exist after fetching",
+                           tool_data.exe_path.u8string());
 
         return tool_data.exe_path;
-#endif
     }
 
     static fs::path get_cmake_path(const VcpkgPaths& paths)
@@ -345,8 +509,8 @@ namespace vcpkg::Commands::Fetch
         const auto& program_files_32_bit = System::get_program_files_32_bit();
         if (const auto pf = program_files_32_bit.get()) candidate_paths.push_back(*pf / "CMake" / "bin" / "cmake.exe");
 
-        const Optional<fs::path> path =
-            find_if_has_equal_or_greater_version(candidate_paths, VERSION_CHECK_ARGUMENTS, TOOL_DATA.version);
+        const Optional<fs::path> path = find_if_has_equal_or_greater_version(
+            paths.get_filesystem(), candidate_paths, VERSION_CHECK_ARGUMENTS, TOOL_DATA.version);
         if (const auto p = path.get())
         {
             return *p;
@@ -378,7 +542,8 @@ namespace vcpkg::Commands::Fetch
         const std::vector<fs::path> from_path = Files::find_from_PATH("ninja");
         candidate_paths.insert(candidate_paths.end(), from_path.cbegin(), from_path.cend());
 
-        auto path = find_if_has_equal_or_greater_version(candidate_paths, "--version", TOOL_DATA.version);
+        auto path = find_if_has_equal_or_greater_version(
+            paths.get_filesystem(), candidate_paths, "--version", TOOL_DATA.version);
         if (const auto p = path.get())
         {
             return *p;
@@ -396,7 +561,8 @@ namespace vcpkg::Commands::Fetch
         const std::vector<fs::path> from_path = Files::find_from_PATH("nuget");
         candidate_paths.insert(candidate_paths.end(), from_path.cbegin(), from_path.cend());
 
-        auto path = find_if_has_equal_or_greater_version(candidate_paths, "", TOOL_DATA.version);
+        auto path =
+            find_if_has_equal_or_greater_version(paths.get_filesystem(), candidate_paths, "", TOOL_DATA.version);
         if (const auto p = path.get())
         {
             return *p;
@@ -422,8 +588,8 @@ namespace vcpkg::Commands::Fetch
         const auto& program_files_32_bit = System::get_program_files_32_bit();
         if (const auto pf = program_files_32_bit.get()) candidate_paths.push_back(*pf / "git" / "cmd" / "git.exe");
 
-        const Optional<fs::path> path =
-            find_if_has_equal_or_greater_version(candidate_paths, VERSION_CHECK_ARGUMENTS, TOOL_DATA.version);
+        const Optional<fs::path> path = find_if_has_equal_or_greater_version(
+            paths.get_filesystem(), candidate_paths, VERSION_CHECK_ARGUMENTS, TOOL_DATA.version);
         if (const auto p = path.get())
         {
             return *p;
@@ -448,8 +614,8 @@ namespace vcpkg::Commands::Fetch
         // candidate_paths.push_back(fs::path(System::get_environment_variable("HOMEDRIVE").value_or("C:")) / "Qt" /
         // "QtIFW-3.1.0" / "bin" / "installerbase.exe");
 
-        const Optional<fs::path> path =
-            find_if_has_equal_or_greater_version(candidate_paths, VERSION_CHECK_ARGUMENTS, TOOL_DATA.version);
+        const Optional<fs::path> path = find_if_has_equal_or_greater_version(
+            paths.get_filesystem(), candidate_paths, VERSION_CHECK_ARGUMENTS, TOOL_DATA.version);
         if (const auto p = path.get())
         {
             return *p;
@@ -470,6 +636,7 @@ namespace vcpkg::Commands::Fetch
 
     static std::vector<VisualStudioInstance> get_visual_studio_instances(const VcpkgPaths& paths)
     {
+#if defined(_WIN32)
         const fs::path script = paths.scripts / "findVisualStudioInstallationInstances.ps1";
         const std::string output =
             System::powershell_execute_and_capture_output("Detecting Visual Studio instances", script);
@@ -499,6 +666,9 @@ namespace vcpkg::Commands::Fetch
         }
 
         return instances;
+#else
+        Checks::exit_with_message(VCPKG_LINE_INFO, "Cannot detect Visual Studio on non-Windows systems.");
+#endif
     }
 
     std::vector<Toolset> find_toolset_instances(const VcpkgPaths& paths)

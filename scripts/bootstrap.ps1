@@ -5,35 +5,17 @@ param(
 )
 Set-StrictMode -Version Latest
 $scriptsDir = split-path -parent $script:MyInvocation.MyCommand.Definition
-. "$scriptsDir\VcpkgPowershellUtils.ps1"
-$vcpkgRootDir = vcpkgFindFileRecursivelyUp $scriptsDir .vcpkg-root
-Write-Verbose("vcpkg Path " + $vcpkgRootDir)
 
-$gitHash = "unknownhash"
-$oldpath = $env:path
-try
+$vcpkgRootDir = $scriptsDir
+
+while (!($vcpkgRootDir -eq "") -and !(Test-Path "$vcpkgRootDir\.vcpkg-root"))
 {
-    [xml]$asXml = Get-Content "$scriptsDir\vcpkgTools.xml"
-    $toolData = $asXml.SelectSingleNode("//tools/tool[@name=`"git`"]")
-    $gitFromDownload = "$vcpkgRootDir\downloads\$($toolData.exeRelativePath)"
-    $gitDir = split-path -parent $gitFromDownload
-
-    $env:path += ";$gitDir"
-    if (Get-Command "git" -ErrorAction SilentlyContinue)
-    {
-        $gitHash = git log HEAD -n 1 --format="%cd-%H" --date=short
-        if ($LASTEXITCODE -ne 0)
-        {
-            $gitHash = "unknownhash"
-        }
-    }
+    Write-Verbose "Examining $vcpkgRootDir for .vcpkg-root"
+    $vcpkgRootDir = Split-path $vcpkgRootDir -Parent
 }
-finally
-{
-    $env:path = $oldpath
-}
-Write-Verbose("Git repo version string is " + $gitHash)
+Write-Verbose "Examining $vcpkgRootDir for .vcpkg-root - Found"
 
+$gitHash = "none"
 $vcpkgSourcesPath = "$vcpkgRootDir\toolsrc"
 
 if (!(Test-Path $vcpkgSourcesPath))
@@ -56,6 +38,26 @@ $arguments = (
 "/p:TargetPlatformVersion=$windowsSDK",
 "/m",
 "`"$vcpkgSourcesPath\dirs.proj`"") -join " "
+
+function vcpkgInvokeCommandClean()
+{
+    param ( [Parameter(Mandatory=$true)][string]$executable,
+                                        [string]$arguments = "")
+
+    Write-Verbose "Clean-Executing: ${executable} ${arguments}"
+    $scriptsDir = split-path -parent $script:MyInvocation.MyCommand.Definition
+    $cleanEnvScript = "$scriptsDir\VcpkgPowershellUtils-ClearEnvironment.ps1"
+    $tripleQuotes = "`"`"`""
+    $argumentsWithEscapedQuotes = $arguments -replace "`"", $tripleQuotes
+    $command = ". $tripleQuotes$cleanEnvScript$tripleQuotes; & $tripleQuotes$executable$tripleQuotes $argumentsWithEscapedQuotes"
+    $arg = "-NoProfile", "-ExecutionPolicy Bypass", "-command $command"
+
+    $process = Start-Process -FilePath powershell.exe -ArgumentList $arg -PassThru -NoNewWindow
+    Wait-Process -InputObject $process
+    $ec = $process.ExitCode
+    Write-Verbose "Execution terminated with exit code $ec."
+    return $ec
+}
 
 # vcpkgInvokeCommandClean cmd "/c echo %PATH%"
 $ec = vcpkgInvokeCommandClean $msbuildExe $arguments
