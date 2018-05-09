@@ -114,7 +114,7 @@ function vcpkgInvokeCommandClean()
 }
 
 # vcpkgInvokeCommandClean cmd "/c echo %PATH%"
-Write-Host "Building vcpkg.exe ..."
+Write-Host "`nBuilding vcpkg.exe ...`n"
 $ec = vcpkgInvokeCommandClean $msbuildExe $arguments
 
 if ($ec -ne 0)
@@ -122,7 +122,7 @@ if ($ec -ne 0)
     Write-Error "Building vcpkg.exe failed. Please ensure you have installed Visual Studio with the Desktop C++ workload and the Windows SDK for Desktop C++."
     return
 }
-Write-Host "Building vcpkg.exe... done."
+Write-Host "`nBuilding vcpkg.exe... done.`n"
 
 Write-Verbose("Placing vcpkg.exe in the correct location")
 
