@@ -6,7 +6,7 @@ Set-StrictMode -Version Latest
 $scriptsDir = split-path -parent $script:MyInvocation.MyCommand.Definition
 . "$scriptsDir\VcpkgPowershellUtils.ps1"
 
-$programFiles = & $scriptsDir\getProgramFiles32bit.ps1
+$programFiles = getProgramFiles32bit
 
 $results = New-Object System.Collections.ArrayList
 

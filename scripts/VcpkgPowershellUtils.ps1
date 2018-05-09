@@ -5,5 +5,21 @@ function vcpkgHasProperty([Parameter(Mandatory=$true)][AllowNull()]$object, [Par
         return $false
     }
 
-    return [bool]($object.psobject.Properties | where { $_.Name -eq "$propertyName"})
+    return [bool]($object.psobject.Properties | Where-Object { $_.Name -eq "$propertyName"})
+}
+
+function getProgramFiles32bit()
+{
+    $out = ${env:PROGRAMFILES(X86)}
+    if ($out -eq $null)
+    {
+        $out = ${env:PROGRAMFILES}
+    }
+
+    if ($out -eq $null)
+    {
+        throw "Could not find [Program Files 32-bit]"
+    }
+
+    return $out
 }

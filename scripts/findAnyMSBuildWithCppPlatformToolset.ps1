@@ -6,6 +6,7 @@ param(
 
 Set-StrictMode -Version Latest
 $scriptsDir = split-path -parent $script:MyInvocation.MyCommand.Definition
+. "$scriptsDir\VcpkgPowershellUtils.ps1"
 
 $withVSPath = $withVSPath -replace "\\$" # Remove potential trailing backslash
 
@@ -49,7 +50,7 @@ foreach ($instanceCandidateWithEOL in $VisualStudioInstallationInstances)
         if (Test-Path $clExe)
         {
             Write-Verbose "Picking: $instanceCandidate"
-            $programFilesPath = & $scriptsDir\getProgramFiles32bit.ps1
+            $programFilesPath = getProgramFiles32bit
             return "$programFilesPath\MSBuild\14.0\Bin\MSBuild.exe", "v140"
         }
     }
