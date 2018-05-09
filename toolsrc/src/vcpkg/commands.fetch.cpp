@@ -1,5 +1,6 @@
 #include "pch.h"
 
+#include "vcpkg/base/sortedvector.h"
 #include <vcpkg/base/checks.h>
 #include <vcpkg/base/strings.h>
 #include <vcpkg/base/system.h>
@@ -460,8 +461,8 @@ namespace vcpkg::Commands::Fetch
 
         winhttp_download_file(download_path_part.c_str(), hostname, path);
 #else
-        const auto code = System::cmd_execute(Strings::format(
-            R"(curl -L '%s' --create-dirs --output '%s')", url, download_path_part));
+        const auto code = System::cmd_execute(
+            Strings::format(R"(curl -L '%s' --create-dirs --output '%s')", url, download_path_part));
         Checks::check_exit(VCPKG_LINE_INFO, code == 0, "Could not download %s", url);
 #endif
 
@@ -653,13 +654,99 @@ namespace vcpkg::Commands::Fetch
 
     struct VisualStudioInstance
     {
+        enum class ReleaseType
+        {
+            STABLE,
+            PRERELEASE,
+            LEGACY
+        };
+
+        static ReleaseType to_release_type(const std::string& is_prerelease)
+        {
+            if (is_prerelease == "0") return ReleaseType::STABLE;
+            if (is_prerelease == "1") return ReleaseType::PRERELEASE;
+            return ReleaseType::LEGACY;
+        }
+
+        static bool prefered_first_comparator(const VisualStudioInstance& left, const VisualStudioInstance& right)
+        {
+            const auto get_preference_weight = [](const ReleaseType& type) -> int {
+                switch (type)
+                {
+                    case ReleaseType::STABLE: return 3;
+                    case ReleaseType::PRERELEASE: return 2;
+                    case ReleaseType::LEGACY: return 1;
+                    default: Checks::unreachable(VCPKG_LINE_INFO);
+                }
+            };
+
+            if (left.release_type != right.release_type)
+            {
+                return get_preference_weight(left.release_type) > get_preference_weight(right.release_type);
+            }
+
+            return left.version > right.version;
+        }
+
+        VisualStudioInstance(fs::path&& root_path, std::string&& version, const ReleaseType& release_type)
+            : root_path(std::move(root_path)), version(std::move(version)), release_type(release_type)
+        {
+        }
+
         fs::path root_path;
         std::string version;
-        std::string release_type;
-        std::string preference_weight; // Mostly unused, just for verification that order is as intended
+        ReleaseType release_type;
 
         std::string major_version() const { return version.substr(0, 2); }
     };
+
+    static std::vector<VisualStudioInstance> get_visual_studio_instances_no_ps(const VcpkgPaths& paths)
+    {
+        const auto& fs = paths.get_filesystem();
+
+        const auto& program_files_32_bit = System::get_program_files_32_bit().value_or_exit(VCPKG_LINE_INFO);
+        const fs::path vswhere_exe = program_files_32_bit / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+        Checks::check_exit(
+            VCPKG_LINE_INFO, fs.exists(vswhere_exe), "Could not locate vswhere at %s", vswhere_exe.u8string());
+
+        const auto code_and_output = System::cmd_execute_and_capture_output(
+            Strings::format(R"("%s" -prerelease -legacy -products * -format xml)", vswhere_exe.u8string()));
+
+        Checks::check_exit(VCPKG_LINE_INFO,
+                           code_and_output.exit_code == 0,
+                           "Running vswhere.exe failed with message:\n%s",
+                           code_and_output.output);
+
+        const auto& xml_as_string = code_and_output.output;
+
+        const auto get_next = [&xml_as_string](const size_t offset) {
+            return BilaterallyDelimitedSubstringIndexes::find(xml_as_string, "<instance>", R"(</instance>)", offset);
+        };
+
+        std::vector<VisualStudioInstance> instances;
+        for (Optional<BilaterallyDelimitedSubstringIndexes> instance_idx = get_next(0); instance_idx.has_value();
+             instance_idx = get_next(instance_idx.value_or_exit(VCPKG_LINE_INFO).end_including_delimiter))
+        {
+            const std::string instance =
+                instance_idx.value_or_exit(VCPKG_LINE_INFO).get_substring_without_deliminters(xml_as_string);
+
+            const std::string path =
+                extract_string_between_delimiters_or_exit(instance, "<installationPath>", R"(</installationPath>)");
+            const std::string version = extract_string_between_delimiters_or_exit(
+                instance, "<installationVersion>", R"(</installationVersion>)");
+
+            const Optional<std::string> is_prerelease_opt =
+                extract_string_between_delimiters(instance, "<isPrerelease>", R"(</isPrerelease>)");
+
+            const std::string is_prerelease =
+                is_prerelease_opt.has_value() ? is_prerelease_opt.value_or_exit(VCPKG_LINE_INFO) : "-7";
+
+            instances.push_back(VisualStudioInstance(
+                fs::path{path}, std::string{version}, VisualStudioInstance::to_release_type(is_prerelease)));
+        }
+
+        return instances;
+    }
 
     static std::vector<VisualStudioInstance> get_visual_studio_instances(const VcpkgPaths& paths)
     {
@@ -682,14 +769,37 @@ namespace vcpkg::Commands::Fetch
         std::vector<VisualStudioInstance> instances;
         for (const std::string& instance_as_string : instances_as_strings)
         {
-            const std::vector<std::string> split = Strings::split(instance_as_string, "::");
+            std::vector<std::string> split = Strings::split(instance_as_string, "::");
             Checks::check_exit(VCPKG_LINE_INFO,
                                split.size() == 4,
                                "Invalid Visual Studio instance format.\n"
                                "Expected: PreferenceWeight::ReleaseType::Version::PathToVisualStudio\n"
                                "Actual  : %s\n",
                                instance_as_string);
-            instances.push_back({split.at(3), split.at(2), split.at(1), split.at(0)});
+
+            const auto path = split.at(3);
+            const auto version = split.at(2);
+            const auto release_type_as_string = split.at(1);
+
+            VisualStudioInstance::ReleaseType release_type;
+            if (release_type_as_string == "StableRelease")
+            {
+                release_type = VisualStudioInstance::ReleaseType::STABLE;
+            }
+            else if (release_type_as_string == "PreRelease")
+            {
+                release_type = VisualStudioInstance::ReleaseType::PRERELEASE;
+            }
+            else if (release_type_as_string == "Legacy")
+            {
+                release_type = VisualStudioInstance::ReleaseType::LEGACY;
+            }
+            else
+            {
+                Checks::unreachable(VCPKG_LINE_INFO);
+            }
+
+            instances.emplace_back(std::string(path), std::string(version), release_type);
         }
 
         return instances;
@@ -710,12 +820,14 @@ namespace vcpkg::Commands::Fetch
         std::vector<Toolset> found_toolsets;
         std::vector<Toolset> excluded_toolsets;
 
-        const std::vector<VisualStudioInstance> vs_instances = get_visual_studio_instances(paths);
+        const std::vector<VisualStudioInstance> vs_instances = get_visual_studio_instances_no_ps(paths);
+        const SortedVector<VisualStudioInstance> sorted{vs_instances, VisualStudioInstance::prefered_first_comparator};
+
         const bool v140_is_available = Util::find_if(vs_instances, [&](const VisualStudioInstance& vs_instance) {
                                            return vs_instance.major_version() == "14";
                                        }) != vs_instances.cend();
 
-        for (const VisualStudioInstance& vs_instance : vs_instances)
+        for (const VisualStudioInstance& vs_instance : sorted)
         {
             const std::string major_version = vs_instance.major_version();
             if (major_version == "15")
