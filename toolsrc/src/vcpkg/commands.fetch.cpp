@@ -42,20 +42,49 @@ namespace vcpkg::Commands::Fetch
         return result;
     }
 
+    struct BilaterallyDelimitedSubstringIndexes
+    {
+        static Optional<BilaterallyDelimitedSubstringIndexes> find(const std::string& input,
+                                                                   const std::string& left_delim,
+                                                                   const std::string& right_delim,
+                                                                   const size_t& starting_offset = 0)
+        {
+            const size_t start_including_delimiter = input.find(left_delim, starting_offset);
+            if (start_including_delimiter == std::string::npos) return nullopt;
+
+            const size_t start_excluding_delimiter = start_including_delimiter + left_delim.length();
+
+            const size_t end_excluding_delimiter = input.find(right_delim, start_excluding_delimiter);
+            if (end_excluding_delimiter == std::string::npos) return nullopt;
+
+            const size_t end_including_delimiter = end_excluding_delimiter + right_delim.length();
+            return BilaterallyDelimitedSubstringIndexes{
+                start_including_delimiter, start_excluding_delimiter, end_excluding_delimiter, end_including_delimiter};
+        }
+
+        size_t start_including_delimiter;
+        size_t start_excluding_delimiter;
+        size_t end_excluding_delimiter;
+        size_t end_including_delimiter;
+
+        std::string get_substring_without_deliminters(const std::string& input) const
+        {
+            return input.substr(start_excluding_delimiter, end_excluding_delimiter - start_excluding_delimiter);
+        }
+    };
+
     static Optional<std::string> extract_string_between_delimiters(const std::string& input,
                                                                    const std::string& left_delim,
                                                                    const std::string& right_delim,
                                                                    const size_t& starting_offset = 0)
     {
-        const size_t from = input.find(left_delim, starting_offset);
-        if (from == std::string::npos) return nullopt;
+        auto it = BilaterallyDelimitedSubstringIndexes::find(input, left_delim, right_delim, starting_offset);
+        if (const auto indexes = it.get())
+        {
+            return indexes->get_substring_without_deliminters(input);
+        }
 
-        const size_t substring_start = from + left_delim.length();
-
-        const size_t to = input.find(right_delim, substring_start);
-        if (from == std::string::npos) return nullopt;
-
-        return input.substr(substring_start, to - substring_start);
+        return nullopt;
     }
 
     static ToolData parse_tool_data_from_xml(const VcpkgPaths& paths, const std::string& tool)
