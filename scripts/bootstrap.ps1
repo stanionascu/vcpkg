@@ -27,14 +27,14 @@ if (!(Test-Path $vcpkgSourcesPath))
 
 function findAnyMSBuildWithCppPlatformToolset([string]$withVSPath)
 {
-    $VisualStudioInstallationInstances = & $scriptsDir\findVisualStudioInstallationInstances.ps1
-    if ($VisualStudioInstallationInstances -eq $null)
+    $VisualStudioInstances = & $scriptsDir\getVisualStudioInstances.ps1
+    if ($VisualStudioInstances -eq $null)
     {
         throw "Could not find Visual Studio. VS2015 or VS2017 (with C++) needs to be installed."
     }
 
-    Write-Verbose "VS Candidates:`n`r$([system.String]::Join([Environment]::NewLine, $VisualStudioInstallationInstances))"
-    foreach ($instanceCandidateWithEOL in $VisualStudioInstallationInstances)
+    Write-Verbose "VS Candidates:`n`r$([system.String]::Join([Environment]::NewLine, $VisualStudioInstances))"
+    foreach ($instanceCandidateWithEOL in $VisualStudioInstances)
     {
         $instanceCandidate = $instanceCandidateWithEOL -replace "<sol>::" -replace "::<eol>"
         Write-Verbose "Inspecting: $instanceCandidate"
