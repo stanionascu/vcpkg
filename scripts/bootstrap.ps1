@@ -36,7 +36,9 @@ $arguments = (
 "/p:Platform=x86",
 "/p:PlatformToolset=$platformToolset",
 "/p:TargetPlatformVersion=$windowsSDK",
+"/verbosity:minimal",
 "/m",
+"/nologo",
 "`"$vcpkgSourcesPath\dirs.proj`"") -join " "
 
 function vcpkgInvokeCommandClean()
@@ -60,6 +62,7 @@ function vcpkgInvokeCommandClean()
 }
 
 # vcpkgInvokeCommandClean cmd "/c echo %PATH%"
+Write-Host "Building vcpkg.exe ..."
 $ec = vcpkgInvokeCommandClean $msbuildExe $arguments
 
 if ($ec -ne 0)
@@ -67,6 +70,7 @@ if ($ec -ne 0)
     Write-Error "Building vcpkg.exe failed. Please ensure you have installed Visual Studio with the Desktop C++ workload and the Windows SDK for Desktop C++."
     return
 }
+Write-Host "Building vcpkg.exe... done."
 
 Write-Verbose("Placing vcpkg.exe in the correct location")
 
