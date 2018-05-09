@@ -637,7 +637,7 @@ namespace vcpkg::Commands::Fetch
     static std::vector<VisualStudioInstance> get_visual_studio_instances(const VcpkgPaths& paths)
     {
 #if defined(_WIN32)
-        const fs::path script = paths.scripts / "findVisualStudioInstallationInstances.ps1";
+        const fs::path script = paths.scripts / "getVisualStudioInstances.ps1";
         const std::string output =
             System::powershell_execute_and_capture_output("Detecting Visual Studio instances", script);
 
