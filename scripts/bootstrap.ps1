@@ -15,7 +15,7 @@ while (!($vcpkgRootDir -eq "") -and !(Test-Path "$vcpkgRootDir\.vcpkg-root"))
 }
 Write-Verbose "Examining $vcpkgRootDir for .vcpkg-root - Found"
 
-$gitHash = "none"
+$gitHash = "nohash"
 $vcpkgSourcesPath = "$vcpkgRootDir\toolsrc"
 
 if (!(Test-Path $vcpkgSourcesPath))
