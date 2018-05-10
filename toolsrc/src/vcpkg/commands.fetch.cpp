@@ -69,7 +69,8 @@ namespace vcpkg::Commands::Fetch
 
         std::string get_substring_without_deliminters(const std::string& input) const
         {
-            return input.substr(start_excluding_delimiter, end_excluding_delimiter - start_excluding_delimiter);
+            return Strings::trim(
+                input.substr(start_excluding_delimiter, end_excluding_delimiter - start_excluding_delimiter));
         }
     };
 
@@ -87,6 +88,17 @@ namespace vcpkg::Commands::Fetch
         return nullopt;
     }
 
+    static std::string extract_string_between_delimiters_or_exit(const std::string& input,
+                                                                 const std::string& left_tag,
+                                                                 const std::string& right_tag,
+                                                                 const size_t& starting_offset = 0)
+    {
+        Optional<std::string> result = extract_string_between_delimiters(input, left_tag, right_tag, starting_offset);
+        Checks::check_exit(
+            VCPKG_LINE_INFO, result.has_value(), "Could not find <%s>.*<%s> in block:\n%s", left_tag, right_tag, input);
+        return result.value_or_exit(VCPKG_LINE_INFO);
+    }
+
     static ToolData parse_tool_data_from_xml(const VcpkgPaths& paths, const std::string& tool)
     {
 #if defined(_WIN32)
@@ -102,21 +114,6 @@ namespace vcpkg::Commands::Fetch
 #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
         static const std::string XML_VERSION = "2";
         static const fs::path XML_PATH = paths.scripts / "vcpkgTools.xml";
-
-        const auto get_string_inside_tags =
-            [](const std::string& input, const std::string& left_delim, const std::string& right_delim) -> std::string {
-            Optional<std::string> result = extract_string_between_delimiters(input, left_delim, right_delim);
-            Checks::check_exit(VCPKG_LINE_INFO,
-                               result.has_value(),
-                               "Could not find tag <%s>.*<%s> in %s",
-                               left_delim,
-                               right_delim,
-                               XML_PATH.generic_string());
-
-            auto r = *result.get();
-            return Strings::trim(std::move(r));
-        };
-
         static const std::regex XML_VERSION_REGEX{R"###(<tools[\s]+version="([^"]+)">)###"};
         static const std::string XML = paths.get_filesystem().read_contents(XML_PATH).value_or_exit(VCPKG_LINE_INFO);
         std::smatch match_xml_version;
@@ -142,13 +139,14 @@ namespace vcpkg::Commands::Fetch
                            tool,
                            XML_PATH.generic_string());
 
-        const std::string tool_data = get_string_inside_tags(XML, match_tool_entry[0], R"(</tool>)");
+        const std::string tool_data = extract_string_between_delimiters_or_exit(XML, match_tool_entry[0], R"(</tool>)");
 
-        const std::string version_as_string = get_string_inside_tags(tool_data, "<version>", R"(</version>)");
+        const std::string version_as_string =
+            extract_string_between_delimiters_or_exit(tool_data, "<version>", R"(</version>)");
         const std::string exe_relative_path =
-            get_string_inside_tags(tool_data, "<exeRelativePath>", R"(</exeRelativePath>)");
-        const std::string url = get_string_inside_tags(tool_data, "<url>", R"(</url>)");
-        const std::string sha512 = get_string_inside_tags(tool_data, "<sha512>", R"(</sha512>)");
+            extract_string_between_delimiters_or_exit(tool_data, "<exeRelativePath>", R"(</exeRelativePath>)");
+        const std::string url = extract_string_between_delimiters_or_exit(tool_data, "<url>", R"(</url>)");
+        const std::string sha512 = extract_string_between_delimiters_or_exit(tool_data, "<sha512>", R"(</sha512>)");
         auto archive_name = extract_string_between_delimiters(tool_data, "<archiveName>", R"(</archiveName>)");
 
         const Optional<std::array<int, 3>> version = parse_version_string(version_as_string);
