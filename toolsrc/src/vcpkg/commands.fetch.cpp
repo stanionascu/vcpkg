@@ -338,7 +338,7 @@ namespace vcpkg::Commands::Fetch
 
         auto hSession = WinHttpOpen(
             L"vcpkg/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        Checks::check_exit(VCPKG_LINE_INFO, hSession, "WinHttpOpen() failed: %s", GetLastError());
+        Checks::check_exit(VCPKG_LINE_INFO, hSession, "WinHttpOpen() failed: %d", GetLastError());
 
         // Use Windows 10 defaults on Windows 7
         DWORD secure_protocols(WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1 |
@@ -347,7 +347,7 @@ namespace vcpkg::Commands::Fetch
 
         // Specify an HTTP server.
         auto hConnect = WinHttpConnect(hSession, Strings::to_utf16(hostname).c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
-        Checks::check_exit(VCPKG_LINE_INFO, hConnect, "WinHttpConnect() failed: %s", GetLastError());
+        Checks::check_exit(VCPKG_LINE_INFO, hConnect, "WinHttpConnect() failed: %d", GetLastError());
 
         // Create an HTTP request handle.
         auto hRequest = WinHttpOpenRequest(hConnect,
@@ -357,16 +357,16 @@ namespace vcpkg::Commands::Fetch
                                            WINHTTP_NO_REFERER,
                                            WINHTTP_DEFAULT_ACCEPT_TYPES,
                                            WINHTTP_FLAG_SECURE);
-        Checks::check_exit(VCPKG_LINE_INFO, hRequest, "WinHttpOpenRequest() failed: %s", GetLastError());
+        Checks::check_exit(VCPKG_LINE_INFO, hRequest, "WinHttpOpenRequest() failed: %d", GetLastError());
 
         // Send a request.
         auto bResults =
             WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-        Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpSendRequest() failed: %s", GetLastError());
+        Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpSendRequest() failed: %d", GetLastError());
 
         // End the request.
         bResults = WinHttpReceiveResponse(hRequest, NULL);
-        Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpReceiveResponse() failed: %s", GetLastError());
+        Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpReceiveResponse() failed: %d", GetLastError());
 
         std::vector<char> buf;
 
@@ -376,12 +376,12 @@ namespace vcpkg::Commands::Fetch
         {
             DWORD downloaded_size = 0;
             bResults = WinHttpQueryDataAvailable(hRequest, &dwSize);
-            Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpQueryDataAvailable() failed: %s", GetLastError());
+            Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpQueryDataAvailable() failed: %d", GetLastError());
 
             if (buf.size() < dwSize) buf.resize(dwSize * 2);
 
             bResults = WinHttpReadData(hRequest, (LPVOID)buf.data(), dwSize, &downloaded_size);
-            Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpReadData() failed: %s", GetLastError());
+            Checks::check_exit(VCPKG_LINE_INFO, bResults, "WinHttpReadData() failed: %d", GetLastError());
             fwrite(buf.data(), 1, downloaded_size, f);
 
             total_downloaded_size += downloaded_size;
