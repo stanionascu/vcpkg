@@ -318,8 +318,14 @@ namespace vcpkg::Commands::Fetch
     static void winhttp_download_file(CStringView target_file_path, CStringView hostname, CStringView url_path)
     {
         FILE* f = nullptr;
-        auto err = fopen_s(&f, target_file_path.c_str(), "wb");
-        Checks::check_exit(VCPKG_LINE_INFO, !err, "Could not download https://%s%s", hostname, url_path);
+        const errno_t err = fopen_s(&f, target_file_path.c_str(), "wb");
+        Checks::check_exit(VCPKG_LINE_INFO,
+                           !err,
+                           "Could not download https://%s%s. Failed to open file %s. Error code was %s",
+                           hostname,
+                           url_path,
+                           target_file_path,
+                           std::to_string(err));
 
         auto hSession = WinHttpOpen(
             L"vcpkg/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
