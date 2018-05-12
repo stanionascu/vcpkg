@@ -39,6 +39,7 @@ namespace vcpkg
         paths.triplets = paths.root / "triplets";
         paths.scripts = paths.root / "scripts";
 
+        paths.tools = paths.downloads / "tools";
         paths.buildsystems = paths.scripts / "buildsystems";
         paths.buildsystems_msbuild_targets = paths.buildsystems / "msbuild" / "vcpkg.targets";
 
