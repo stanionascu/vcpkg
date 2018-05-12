@@ -745,6 +745,29 @@ namespace vcpkg::Commands::Fetch
                 fs::path{path}, std::string{version}, VisualStudioInstance::to_release_type(is_prerelease)));
         }
 
+        const auto append_if_available = [&](const fs::path& path_root) {
+            const auto cl_exe = path_root / "VC" / "bin" / "cl.exe";
+            const auto vcvarsall_bat = path_root / "VC" / "vcvarsall.bat";
+
+            if (fs.exists(cl_exe) && fs.exists(vcvarsall_bat))
+            {
+                instances.push_back(VisualStudioInstance(
+                    fs::path(path_root), std::string{"14.0"}, VisualStudioInstance::ReleaseType::LEGACY));
+            }
+        };
+
+        const Optional<std::string> from_environment_variable = System::get_environment_variable("vs140comntools");
+        if (const auto path_as_string = from_environment_variable.get())
+        {
+            // We want lexically_normal(), but it is not available
+            // Correct root path might be 2 or 3 levels up, depending on if the path has trailing backslash. Try both.
+            auto common7_tools = fs::path{*path_as_string};
+            append_if_available(fs::path{*path_as_string}.parent_path().parent_path());
+            append_if_available(fs::path{*path_as_string}.parent_path().parent_path().parent_path());
+        }
+
+        append_if_available(program_files_32_bit / "Microsoft Visual Studio 14.0");
+
         return instances;
     }
 
