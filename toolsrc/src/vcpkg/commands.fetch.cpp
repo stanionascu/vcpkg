@@ -212,23 +212,6 @@ namespace vcpkg::Commands::Fetch
         return nullopt;
     }
 
-    static std::vector<std::string> keep_data_lines(const std::string& data_blob)
-    {
-        static const std::regex DATA_LINE_REGEX(R"(<sol>::(.+?)(?=::<eol>))");
-
-        std::vector<std::string> data_lines;
-
-        const std::sregex_iterator it(data_blob.cbegin(), data_blob.cend(), DATA_LINE_REGEX);
-        const std::sregex_iterator end;
-        for (std::sregex_iterator i = it; i != end; ++i)
-        {
-            const std::smatch match = *i;
-            data_lines.push_back(match[1].str());
-        }
-
-        return data_lines;
-    }
-
     static void extract_archive(const VcpkgPaths& paths, const fs::path& archive, const fs::path& to_path)
     {
         Files::Filesystem& fs = paths.get_filesystem();
