@@ -113,9 +113,8 @@ namespace vcpkg
             return external_toolset;
         }
 
-        // Invariant: toolsets are non-empty and sorted with newest at back()
         const std::vector<Toolset>& vs_toolsets =
-            this->toolsets.get_lazy([this]() { return Commands::Fetch::find_toolset_instances(*this); });
+            this->toolsets.get_lazy([this]() { return Commands::Fetch::find_toolset_instances_prefered_first(*this); });
 
         std::vector<const Toolset*> candidates = Util::element_pointers(vs_toolsets);
         const auto tsv = prebuildinfo.platform_toolset.get();

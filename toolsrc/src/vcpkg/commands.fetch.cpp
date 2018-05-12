@@ -748,7 +748,7 @@ namespace vcpkg::Commands::Fetch
         return instances;
     }
 
-    std::vector<Toolset> find_toolset_instances(const VcpkgPaths& paths)
+    std::vector<Toolset> find_toolset_instances_prefered_first(const VcpkgPaths& paths)
     {
         using CPU = System::CPUArchitecture;
 
