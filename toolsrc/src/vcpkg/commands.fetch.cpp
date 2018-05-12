@@ -459,7 +459,7 @@ namespace vcpkg::Commands::Fetch
         {
             std::error_code ec;
             fs.create_directories(tool_data.exe_path.parent_path(), ec);
-            fs.copy_file(tool_data.download_path, tool_data.exe_path, fs::copy_options::overwrite_existing, ec);
+            fs.rename(tool_data.download_path, tool_data.exe_path, ec);
         }
 
         Checks::check_exit(VCPKG_LINE_INFO,
