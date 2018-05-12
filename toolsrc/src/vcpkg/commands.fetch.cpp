@@ -1,7 +1,7 @@
 #include "pch.h"
 
-#include "vcpkg/base/sortedvector.h"
 #include <vcpkg/base/checks.h>
+#include <vcpkg/base/sortedvector.h>
 #include <vcpkg/base/strings.h>
 #include <vcpkg/base/system.h>
 #include <vcpkg/base/util.h>
@@ -158,7 +158,7 @@ namespace vcpkg::Commands::Fetch
                            version_as_string);
 
         const std::string tool_dir_name = Strings::format("%s-%s-%s", tool, version_as_string, OS_STRING);
-        const fs::path tool_dir_path = paths.downloads / "tools" / tool_dir_name;
+        const fs::path tool_dir_path = paths.tools / tool_dir_name;
         const fs::path exe_path = tool_dir_path / exe_relative_path;
 
         return ToolData{*version.get(),
@@ -229,61 +229,6 @@ namespace vcpkg::Commands::Fetch
         return data_lines;
     }
 
-#if defined(_WIN32)
-    static void extract_zip_win32_shell(Files::Filesystem& fs, const fs::path& archive, const fs::path& to_path_partial)
-    {
-        BSTR src = SysAllocString(archive.native().c_str());
-        BSTR dest = SysAllocString(to_path_partial.native().c_str());
-
-        CoInitialize(nullptr);
-        IShellDispatch* pISD;
-        Folder* pFolder = nullptr;
-        VARIANT vDir, vFile, vOpt;
-        auto hr = CoCreateInstance(CLSID_Shell, NULL, CLSCTX_INPROC_SERVER, IID_IShellDispatch, (void**)&pISD);
-        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
-        VariantInit(&vFile);
-        vFile.vt = VT_BSTR;
-        vFile.bstrVal = src;
-
-        hr = pISD->NameSpace(vFile, &pFolder);
-        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
-        FolderItems* fi = NULL;
-        hr = pFolder->Items(&fi);
-        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
-
-        VariantInit(&vOpt);
-        vOpt.vt = VT_I4;
-        vOpt.lVal = FOF_NO_UI; // Do not display a progress dialog box
-
-        VARIANT newV;
-        VariantInit(&newV);
-        newV.vt = VT_DISPATCH;
-        newV.pdispVal = fi;
-
-        Folder* pToFolder = nullptr;
-        VariantInit(&vDir);
-        vDir.vt = VT_BSTR;
-        vDir.bstrVal = dest;
-
-        std::error_code ec;
-        fs.create_directories(to_path_partial, ec);
-        hr = pISD->NameSpace(vDir, &pToFolder);
-        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
-
-        hr = pToFolder->CopyHere(newV, vOpt);
-        Checks::check_exit(VCPKG_LINE_INFO, SUCCEEDED(hr) && hr != S_FALSE);
-
-        pToFolder->Release();
-        pFolder->Release();
-        pISD->Release();
-
-        SysFreeString(src);
-        SysFreeString(dest);
-
-        CoUninitialize();
-    }
-#endif
-
     static void extract_archive(const VcpkgPaths& paths, const fs::path& archive, const fs::path& to_path)
     {
         Files::Filesystem& fs = paths.get_filesystem();
@@ -292,41 +237,49 @@ namespace vcpkg::Commands::Fetch
         std::error_code ec;
         fs.remove_all(to_path_partial, ec);
         fs.create_directories(to_path_partial, ec);
-
+        const auto ext = archive.extension();
 #if defined(_WIN32)
-        const auto filename = archive.filename();
-        if (filename == "7za920.zip")
+        if (ext == ".nupkg")
         {
-            extract_zip_win32_shell(fs, archive, to_path_partial);
-            for (int x = 0; x < 600; ++x)
-            {
-                if (fs.exists(to_path_partial / "7za.exe")) goto copying_completed;
-                Sleep(100);
-            }
-            Checks::exit_with_message(VCPKG_LINE_INFO, "timeout while extracting %s", archive.u8string());
-        copying_completed:;
-        }
-        else if (filename == "7z1801-extra.7z")
-        {
-            static bool recursion_limiter7zold = false;
-            Checks::check_exit(VCPKG_LINE_INFO, !recursion_limiter7zold);
-            recursion_limiter7zold = true;
-            const auto old_7zip = get_tool_path(paths, "7zip920");
+            static bool recursion_limiter_sevenzip_old = false;
+            Checks::check_exit(VCPKG_LINE_INFO, !recursion_limiter_sevenzip_old);
+            recursion_limiter_sevenzip_old = true;
+            const auto nuget_exe = get_tool_path(paths, Tools::NUGET);
+
+            const std::string stem = archive.stem().u8string();
+            // assuming format of [name].[version in the form d.d.d]
+            // This assumption may not always hold
+            std::smatch match;
+            const bool has_match = std::regex_match(stem, match, std::regex{R"###(^(.+)\.(\d+\.\d+\.\d+)$)###"});
+            Checks::check_exit(VCPKG_LINE_INFO,
+                               has_match,
+                               "Could not deduce nuget id and version from filename: %s",
+                               archive.u8string());
+
+            const std::string nugetid = match[1];
+            const std::string version = match[2];
+
             const auto code_and_output = System::cmd_execute_and_capture_output(Strings::format(
-                R"("%s" x "%s" -o"%s" -y)", old_7zip.u8string(), archive.u8string(), to_path_partial.u8string()));
+                R"("%s" install %s -Version %s -OutputDirectory "%s" -Source "%s" -nocache -DirectDownload -NonInteractive -ForceEnglishOutput -PackageSaveMode nuspec)",
+                nuget_exe.u8string(),
+                nugetid,
+                version,
+                to_path_partial.u8string(),
+                paths.downloads.u8string()));
+
             Checks::check_exit(VCPKG_LINE_INFO,
                                code_and_output.exit_code == 0,
-                               "7zip failed while extracting '%s' with message:\n%s",
+                               "Failed to extract '%s' with message:\n%s",
                                archive.u8string(),
                                code_and_output.output);
-            recursion_limiter7zold = false;
+            recursion_limiter_sevenzip_old = false;
         }
         else
         {
-            static bool recursion_limiter7z = false;
-            Checks::check_exit(VCPKG_LINE_INFO, !recursion_limiter7z);
-            recursion_limiter7z = true;
-            const auto seven_zip = get_tool_path(paths, "7zip");
+            static bool recursion_limiter_sevenzip = false;
+            Checks::check_exit(VCPKG_LINE_INFO, !recursion_limiter_sevenzip);
+            recursion_limiter_sevenzip = true;
+            const auto seven_zip = get_tool_path(paths, Tools::SEVEN_ZIP);
             const auto code_and_output = System::cmd_execute_and_capture_output(Strings::format(
                 R"("%s" x "%s" -o"%s" -y)", seven_zip.u8string(), archive.u8string(), to_path_partial.u8string()));
             Checks::check_exit(VCPKG_LINE_INFO,
@@ -334,10 +287,9 @@ namespace vcpkg::Commands::Fetch
                                "7zip failed while extracting '%s' with message:\n%s",
                                archive.u8string(),
                                code_and_output.output);
-            recursion_limiter7z = false;
+            recursion_limiter_sevenzip = false;
         }
 #else
-        const auto ext = archive.extension();
         if (ext == ".gz" && ext.extension() != ".tar")
         {
             const auto code = System::cmd_execute(
