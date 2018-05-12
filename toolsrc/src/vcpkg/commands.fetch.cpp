@@ -748,66 +748,6 @@ namespace vcpkg::Commands::Fetch
         return instances;
     }
 
-    static std::vector<VisualStudioInstance> get_visual_studio_instances(const VcpkgPaths& paths)
-    {
-#if defined(_WIN32)
-        const fs::path script = paths.scripts / "getVisualStudioInstances.ps1";
-        const std::string output =
-            System::powershell_execute_and_capture_output("Detecting Visual Studio instances", script);
-
-        const std::vector<std::string> instances_as_strings = keep_data_lines(output);
-        Checks::check_exit(VCPKG_LINE_INFO,
-                           !instances_as_strings.empty(),
-                           "Could not detect any Visual Studio instances.\n"
-                           "Powershell script:\n"
-                           "    %s\n"
-                           "returned:\n"
-                           "%s",
-                           script.generic_string(),
-                           output);
-
-        std::vector<VisualStudioInstance> instances;
-        for (const std::string& instance_as_string : instances_as_strings)
-        {
-            std::vector<std::string> split = Strings::split(instance_as_string, "::");
-            Checks::check_exit(VCPKG_LINE_INFO,
-                               split.size() == 4,
-                               "Invalid Visual Studio instance format.\n"
-                               "Expected: PreferenceWeight::ReleaseType::Version::PathToVisualStudio\n"
-                               "Actual  : %s\n",
-                               instance_as_string);
-
-            const auto path = split.at(3);
-            const auto version = split.at(2);
-            const auto release_type_as_string = split.at(1);
-
-            VisualStudioInstance::ReleaseType release_type;
-            if (release_type_as_string == "StableRelease")
-            {
-                release_type = VisualStudioInstance::ReleaseType::STABLE;
-            }
-            else if (release_type_as_string == "PreRelease")
-            {
-                release_type = VisualStudioInstance::ReleaseType::PRERELEASE;
-            }
-            else if (release_type_as_string == "Legacy")
-            {
-                release_type = VisualStudioInstance::ReleaseType::LEGACY;
-            }
-            else
-            {
-                Checks::unreachable(VCPKG_LINE_INFO);
-            }
-
-            instances.emplace_back(std::string(path), std::string(version), release_type);
-        }
-
-        return instances;
-#else
-        Checks::exit_with_message(VCPKG_LINE_INFO, "Cannot detect Visual Studio on non-Windows systems.");
-#endif
-    }
-
     std::vector<Toolset> find_toolset_instances(const VcpkgPaths& paths)
     {
         using CPU = System::CPUArchitecture;
