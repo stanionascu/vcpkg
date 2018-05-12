@@ -315,8 +315,17 @@ namespace vcpkg::Commands::Fetch
     }
 
 #if defined(_WIN32)
-    static void winhttp_download_file(CStringView target_file_path, CStringView hostname, CStringView url_path)
+    static void winhttp_download_file(const VcpkgPaths& paths,
+                                      CStringView target_file_path,
+                                      CStringView hostname,
+                                      CStringView url_path)
     {
+        // Make sure the directories are present, otherwise fopen_s fails
+        const auto dir = fs::path(target_file_path.c_str()).parent_path();
+        std::error_code ec;
+        paths.get_filesystem().create_directories(dir, ec);
+        Checks::check_exit(VCPKG_LINE_INFO, !ec, "Could not create directories %s", dir.u8string());
+
         FILE* f = nullptr;
         const errno_t err = fopen_s(&f, target_file_path.c_str(), "wb");
         Checks::check_exit(VCPKG_LINE_INFO,
@@ -401,7 +410,7 @@ namespace vcpkg::Commands::Fetch
         std::string hostname(url_no_proto.begin(), path_begin);
         std::string path(path_begin, url_no_proto.end());
 
-        winhttp_download_file(download_path_part.c_str(), hostname, path);
+        winhttp_download_file(paths, download_path_part.c_str(), hostname, path);
 #else
         const auto code = System::cmd_execute(
             Strings::format(R"(curl -L '%s' --create-dirs --output '%s')", url, download_path_part));
