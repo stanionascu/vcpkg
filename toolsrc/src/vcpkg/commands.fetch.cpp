@@ -700,7 +700,7 @@ namespace vcpkg::Commands::Fetch
         std::string major_version() const { return version.substr(0, 2); }
     };
 
-    static std::vector<VisualStudioInstance> get_visual_studio_instances_no_ps(const VcpkgPaths& paths)
+    static std::vector<VisualStudioInstance> get_visual_studio_instances(const VcpkgPaths& paths)
     {
         const auto& fs = paths.get_filesystem();
 
@@ -760,7 +760,7 @@ namespace vcpkg::Commands::Fetch
         std::vector<Toolset> found_toolsets;
         std::vector<Toolset> excluded_toolsets;
 
-        const std::vector<VisualStudioInstance> vs_instances = get_visual_studio_instances_no_ps(paths);
+        const std::vector<VisualStudioInstance> vs_instances = get_visual_studio_instances(paths);
         const SortedVector<VisualStudioInstance> sorted{vs_instances, VisualStudioInstance::prefered_first_comparator};
 
         const bool v140_is_available = Util::find_if(vs_instances, [&](const VisualStudioInstance& vs_instance) {
