@@ -356,7 +356,8 @@ namespace vcpkg::Commands::Fetch
         }
 #endif
 
-        fs.rename(to_path_partial, to_path);
+        fs.rename(to_path_partial, to_path, ec);
+        Checks::check_exit(VCPKG_LINE_INFO, !ec, "Failed to do post-extract rename-in-place.");
     }
 
     static void verify_hash(const VcpkgPaths& paths,
@@ -467,7 +468,8 @@ namespace vcpkg::Commands::Fetch
 #endif
 
         verify_hash(paths, url, download_path_part, sha512);
-        fs.rename(download_path_part, download_path);
+        fs.rename(download_path_part, download_path, ec);
+        Checks::check_exit(VCPKG_LINE_INFO, !ec, "Failed to do post-download rename-in-place.");
     }
 
     static fs::path fetch_tool(const VcpkgPaths& paths, const std::string& tool_name, const ToolData& tool_data)
