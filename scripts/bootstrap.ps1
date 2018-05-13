@@ -8,6 +8,13 @@ $scriptsDir = split-path -parent $script:MyInvocation.MyCommand.Definition
 . "$scriptsDir\VcpkgPowershellUtils.ps1"
 $vcpkgRootDir = vcpkgFindFileRecursivelyUp $scriptsDir .vcpkg-root
 Write-Verbose("vcpkg Path " + $vcpkgRootDir)
+$vcpkgPlatformArch = $env:VCPKG_PLATFORM
+
+if ($vcpkgPlatformArch) { $vcpkgPlatformArch = $vcpkgPlatformArch.ToLower() }
+else { $vcpkgPlatformArch = "x86" }
+if (-not ($vcpkgPlatformArch -eq "x86" -or $vcpkgPlatformArch -eq "x64")) {
+    Write-Error("unknown platform:" + $vcpkgPlatformArch)
+}
 
 $gitHash = "unknownhash"
 $oldpath = $env:path
@@ -51,7 +58,7 @@ $arguments = (
 "`"/p:VCPKG_VERSION=-$gitHash`"",
 "`"/p:DISABLE_METRICS=$disableMetrics`"",
 "/p:Configuration=Release",
-"/p:Platform=x86",
+"/p:Platform=$vcpkgPlatformArch",
 "/p:PlatformToolset=$platformToolset",
 "/p:TargetPlatformVersion=$windowsSDK",
 "/m",
@@ -67,6 +74,10 @@ if ($ec -ne 0)
 }
 
 Write-Verbose("Placing vcpkg.exe in the correct location")
+
+if ($vcpkgPlatformArch -eq "x64") {
+    $vcpkgSourcesPath = "$vcpkgSourcesPath\x64"
+}
 
 Copy-Item $vcpkgSourcesPath\Release\vcpkg.exe $vcpkgRootDir\vcpkg.exe | Out-Null
 Copy-Item $vcpkgSourcesPath\Release\vcpkgmetricsuploader.exe $vcpkgRootDir\scripts\vcpkgmetricsuploader.exe | Out-Null
